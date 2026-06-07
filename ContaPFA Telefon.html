@@ -66,6 +66,13 @@ label.fld .l{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:
 .sdr b{color:#fff;} .sdr-div{height:1px;background:rgba(255,255,255,.15);margin:5px 0;}
 .sp{margin-top:10px;} .note{font-size:11px;color:var(--grey);line-height:1.6;margin-top:10px;}
 .itip{font-size:12px;color:var(--grey);background:var(--cream);border-radius:10px;padding:11px 13px;margin-top:10px;line-height:1.6;}
+.sync-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;margin-left:2px;}
+.sync-ok{background:#4ade80;}.sync-w{background:#fbbf24;animation:pulse 1s infinite;}
+.sync-err{background:#f87171;}.sync-off{background:#6b7280;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+.sync-bar{background:var(--cream);border:1px solid var(--line);border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;}
+.sync-bar.ok2{background:#eaf5ef;border-color:#b8dfc8;}.sync-bar.err2{background:#fef2f2;border-color:#fecaca;}
+.syncbtn{padding:6px 12px;border-radius:8px;background:var(--navy);color:#fff;font-size:12px;font-weight:700;margin-left:auto;flex:0 0 auto;}
 .menuitem{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 14px;margin-bottom:10px;cursor:pointer;}
 .mico{width:44px;height:44px;border-radius:12px;font-size:22px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
 .minfo{flex:1;} .minfo .mt2{font-size:15px;font-weight:700;} .minfo .ms{font-size:12px;color:var(--grey);margin-top:2px;}
@@ -77,6 +84,7 @@ label.fld .l{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:
   <div id="hdr">
     <div class="hlogo">✚</div>
     <div class="htx"><div class="t">ContaPFA</div><div class="s">Țugui Dan P.F.A. · CUI 53999242</div></div>
+    <div id="syncDot" class="sync-dot sync-off" title="Sincronizare"></div>
     <button class="hexp" onclick="exportCSV()">⤓ Export</button>
   </div>
   <div id="view"></div>
@@ -110,14 +118,43 @@ const SEED_AUTO=[
 ];
 const SEED_SET={salariuMinim:4050,pensionar:1,impozitPct:0.10,cassPct:0.10,procAuto:0.5};
 const SEED_SIM={pret:500,costuri:50};
-var S={tab:"sumar",reg:[],auto:[],set:{},sim:{},showF:false};
+var S={tab:"sumar",reg:[],auto:[],set:{},sim:{},syncUrl:"",showF:false,syncStatus:"off"};
 var KEY="cpfa3";
 function load(){
-  try{var d=JSON.parse(localStorage.getItem(KEY));if(d&&d.reg){S.reg=d.reg;S.auto=d.auto;S.set=d.set;S.sim=d.sim||SEED_SIM;return;}}catch(ex){}
+  try{var d=JSON.parse(localStorage.getItem(KEY));if(d&&d.reg){S.reg=d.reg;S.auto=d.auto;S.set=d.set;S.sim=d.sim||SEED_SIM;S.syncUrl=d.syncUrl||"";return;}}catch(ex){}
   S.reg=JSON.parse(JSON.stringify(SEED_REG));S.auto=JSON.parse(JSON.stringify(SEED_AUTO));
   S.set=Object.assign({},SEED_SET);S.sim=Object.assign({},SEED_SIM);
 }
-function save(){try{localStorage.setItem(KEY,JSON.stringify({reg:S.reg,auto:S.auto,set:S.set,sim:S.sim}));}catch(ex){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify({reg:S.reg,auto:S.auto,set:S.set,sim:S.sim,syncUrl:S.syncUrl}));}catch(ex){}}
+
+function setSyncDot(status){
+  S.syncStatus=status;
+  var d=document.getElementById("syncDot");if(!d)return;
+  d.className="sync-dot sync-"+status;
+}
+function syncRead(){
+  if(!S.syncUrl){setSyncDot("off");return;}
+  setSyncDot("w");
+  fetch(S.syncUrl+"?action=read&t="+Date.now())
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.ok){
+        if(d.reg&&d.reg.length>0)S.reg=d.reg;
+        if(d.auto)S.auto=d.auto;
+        if(d.set)S.set=Object.assign(S.set,d.set);
+        save();render();setSyncDot("ok");
+      }else{setSyncDot("err");}
+    }).catch(function(){setSyncDot("err");});
+}
+function syncWrite(){
+  if(!S.syncUrl)return;
+  fetch(S.syncUrl,{method:"POST",headers:{"Content-Type":"text/plain"},
+    body:JSON.stringify({reg:S.reg,auto:S.auto,set:S.set})})
+  .then(function(r){return r.json();})
+  .then(function(d){setSyncDot(d.ok?"ok":"err");})
+  .catch(function(){setSyncDot("err");});
+}
+
 function r2(n){return Math.round(((+n||0)+1e-9)*100)/100;}
 function lei(n){return (+n||0).toLocaleString("ro-RO",{minimumFractionDigits:2,maximumFractionDigits:2})+" lei";}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
@@ -276,7 +313,15 @@ function vSetari(e){
     +'<label><div class="lb">CASS (%)</div><input class="inp tnum" type="number" inputmode="decimal" step="0.01" value="'+s.cassPct+'" oninput="S.set.cassPct=+this.value;save();render()"></label></div>'
     +'<label><div class="lb">Procent deductibil auto</div><input class="inp tnum" type="number" inputmode="decimal" step="0.05" value="'+s.procAuto+'" oninput="S.set.procAuto=+this.value;save();render()"></label>'
     +'</div>'
-    +'<button onclick="resetAll()" style="width:100%;padding:13px;border-radius:13px;background:#fff;border:1px solid var(--line);color:var(--red);font-weight:700;font-size:14px">Resetează la datele inițiale</button>';
+    +'<div class="card" style="padding:16px;margin-bottom:12px">'
+    +'<div class="lb" style="margin-bottom:8px">Google Sheets — sincronizare bidirecțională</div>'
+    +'<label><div class="l lb">URL Script (din Google Apps Script)</div>'
+    +'<textarea id="syncUrlInp" class="inp" rows="3" style="font-size:13px;resize:none;line-height:1.4" placeholder="https://script.google.com/macros/s/.../exec">'+esc(S.syncUrl)+'</textarea></label>'
+    +'<div style="display:flex;gap:8px;margin-top:10px">'
+    +'<button onclick="saveUrl()" style="flex:1;padding:11px;border-radius:10px;background:var(--navy);color:#fff;font-weight:700;font-size:14px">Salvează URL</button>'
+    +(S.syncUrl?'<button onclick="syncRead()" style="flex:1;padding:11px;border-radius:10px;background:var(--green);color:#fff;font-weight:700;font-size:14px">Citește din Sheets</button>':'')
+    +'</div></div>'
+    +'<button onclick="resetAll()" style="width:100%;padding:13px;border-radius:13px;background:#fff;border:1px solid var(--line);color:var(--red);font-weight:700;font-size:14px;margin-top:0">Resetează la datele inițiale</button>';
 }
 function vAltele(e){
   var opts=[
@@ -315,9 +360,9 @@ function saveReg(id){
   var row={data:g("rd"),doc:g("rdc"),fel:g("rf"),in_num:+g("rin")||0,in_banca:+g("rib")||0,pl_num:+g("rpn")||0,pl_banca:+g("rpb")||0};
   if(id)S.reg=S.reg.map(function(x){return x.id===id?Object.assign({},row,{id:id}):x;});
   else S.reg.push(Object.assign({},row,{id:Date.now()}));
-  save();cm();render();
+  save();syncWrite();cm();render();
 }
-function delReg(id){if(confirm("Ștergi această tranzacție?")){S.reg=S.reg.filter(function(x){return x.id!==id;});save();render();}}
+function delReg(id){if(confirm("Ștergi această tranzacție?")){S.reg=S.reg.filter(function(x){return x.id!==id;});save();syncWrite();render();}}
 function openAuto(id){
   var a=id?Object.assign({},S.auto.find(function(x){return x.id===id;})):{data:today(),furnizor:"",tip:"Bancă",desc:"",suma:0,proc:"",doc:""};
   document.getElementById("modal").innerHTML='<div class="movl" onclick="if(event.target===this)cm()"><div class="msheet">'
@@ -337,10 +382,9 @@ function saveAuto(id){
   var row={data:g("ad"),furnizor:g("af"),tip:g("at"),desc:g("ads"),suma:+g("as")||0,proc:pv===""?"":+pv,doc:""};
   if(id)S.auto=S.auto.map(function(x){return x.id===id?Object.assign({},row,{id:id}):x;});
   else S.auto.push(Object.assign({},row,{id:Date.now()}));
-  save();cm();render();
+  save();syncWrite();cm();render();
 }
-function delAuto(id){if(confirm("Ștergi?")){S.auto=S.auto.filter(function(x){return x.id!==id;});save();render();}}
-function resetAll(){if(confirm("Revii la datele inițiale?")){S.reg=JSON.parse(JSON.stringify(SEED_REG));S.auto=JSON.parse(JSON.stringify(SEED_AUTO));S.set=Object.assign({},SEED_SET);S.sim=Object.assign({},SEED_SIM);save();render();}}
+function delAuto(id){if(confirm("Ștergi?")){S.auto=S.auto.filter(function(x){return x.id!==id;});save();syncWrite();render();}}
 function exportCSV(){
   var e=engine();var q=function(s){return'"'+String(s==null?"":s).replace(/"/g,'""')+'"';};
   var c="\uFEFF";
@@ -352,7 +396,10 @@ function exportCSV(){
   var b=new Blob([c],{type:"text/csv;charset=utf-8;"});
   var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ContaPFA_export.csv";a.click();
 }
+function saveUrl(){var v=document.getElementById("syncUrlInp").value.trim();S.syncUrl=v;save();if(v)syncRead();else{setSyncDot("off");render();}}
+function resetAll(){if(confirm("Revii la datele inițiale?")){S.reg=JSON.parse(JSON.stringify(SEED_REG));S.auto=JSON.parse(JSON.stringify(SEED_AUTO));S.set=Object.assign({},SEED_SET);S.sim=Object.assign({},SEED_SIM);save();syncWrite();render();}}
 load();render();
+if(S.syncUrl)syncRead();
 </script>
 </body>
 </html>
